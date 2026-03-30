@@ -85,19 +85,41 @@ def parse_company_info(message_text: str) -> dict:
 # Step 2: Claude + web_search로 회사 리서치
 # ──────────────────────────────────────────────────
 def research_company(company_name: str | None, email_domain: str | None) -> str:
-    query = company_name or (email_domain.split(".")[-2] if email_domain else None)
-    if not query:
+    if not company_name and not email_domain:
         return "회사 정보를 특정할 수 없어 리서치를 건너뜁니다."
 
-    prompt = (
-        f"'{query}' 회사에 대해 조사해주세요. "
-        "한국어로 다음 내용을 포함해 요약해주세요:\n"
-        "1. 회사 소개 및 주요 사업\n"
-        "2. 회사 규모 (직원 수, 매출 등)\n"
-        "3. 주요 고객 또는 서비스 영역\n"
-        "4. 최근 뉴스 또는 이슈\n"
-        "5. 기술 스택 또는 주요 도구 (IT 기업인 경우)"
-    )
+    prompt = f"""You are a B2B SaaS sales research assistant for Spendit (expense management platform).
+
+Your task is to conduct a structured pre-discovery research on a company before a sales discovery call.
+
+ALL outputs MUST be written in Korean.
+Do NOT use English except for company names, product names, proper nouns.
+
+Return ONLY JSON with this structure:
+{{
+  "company_name": "",
+  "summary": {{"founded_year": "", "ceo": "", "employee_count": "", "business": "", "recent_issue": ""}},
+  "company_overview": {{"founding_background": "", "recent_developments": "", "organization": "", "employee_count": {{"value": "", "confidence": "확정|추정|정보없음"}}}},
+  "business_area": {{"products_services": [], "industries": [], "customers": [], "competitors": []}},
+  "financials": {{"revenue": "", "operating_profit": "", "confidence": "확정|추정|정보없음"}},
+  "investment_stage": "",
+  "recent_news": [{{"date": "", "title": "", "summary": "", "impact": ""}}],
+  "spendit_insight": {{"likely_pain_points": [], "fit_hypothesis": [], "discovery_questions": []}},
+  "unknowns": []
+}}
+
+Pain point categories to map:
+1. 비용 가시성 부족
+2. 수기 비용 처리 / 보고 프로세스
+3. 경비 규정 및 컴플라이언스 문제
+4. 회계/결산 비효율
+5. 거래처 지급 및 정산 복잡성
+6. 프로젝트별 비용 관리 어려움
+7. 외근/현장 인력 비용 처리 문제
+
+DO NOT fabricate data. Use 정보없음 if unavailable.
+
+Company name: {company_name}, Email domain: {email_domain}"""
 
     response = anthropic_client.messages.create(
         model="claude-opus-4-6",
@@ -111,30 +133,49 @@ def research_company(company_name: str | None, email_domain: str | None) -> str:
 
 
 # ──────────────────────────────────────────────────
-# Step 3: Claude로 도입문의 질문 10개 생성
+# Step 3: 도입문의 질문 템플릿 반환
 # ──────────────────────────────────────────────────
 def generate_questions(
     message_text: str, company_name: str | None, research_summary: str
 ) -> str:
-    response = anthropic_client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=2048,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    "B2B SaaS 영업 담당자로서, 고객사와의 첫 미팅 또는 디스커버리 콜을 위한 "
-                    "도입문의 관련 질문 10개를 작성해주세요.\n\n"
-                    f"[원본 도입문의]\n{message_text}\n\n"
-                    f"[회사명] {company_name or '정보 없음'}\n\n"
-                    f"[회사 리서치 요약]\n{research_summary}\n\n"
-                    "위 정보를 바탕으로 맞춤형 질문 10개를 번호 매겨 한국어로 작성해주세요. "
-                    "현재 Pain Point, 도입 목적, 의사결정 구조, 예산, 타임라인 등을 파악할 수 있는 질문을 포함해주세요."
-                ),
-            }
-        ],
-    )
-    return next(b.text for b in response.content if b.type == "text")
+    return """*1. 도입 문의 배경*
+• 어떤 계기로 비용관리 솔루션을 알아보시게 되셨을까요?
+• 현재 특히 불편하시거나 개선이 필요하다고 느끼는 부분이 있으실까요?
+
+*2. 회사 규모*
+• 현재 임직원 수는 어느 정도 되실까요?
+• 비용 처리나 법인카드 사용은 주로 어떤 분들이 하고 계신가요?
+
+*3. 현재 비용 관리 방식*
+• 기장은 내부에서 처리하시나요, 아니면 외부 세무사를 이용하시나요?
+• ERP나 회계 시스템은 어떤 걸 사용 중이신가요?
+• 전자결재(그룹웨어)도 따로 사용 중이실까요?
+• 혹시 이미 비용관리 솔루션을 쓰고 계시다면 어떤 제품인지 여쭤봐도 될까요?
+
+*4. 카드 사용 방식*
+• 회사에서 주로 어떤 방식으로 카드 사용하고 계실까요? (개인형 법인카드 / 공용카드 / 개인카드 후 정산 등)
+
+*5. 세금계산서 & 지급 관리*
+• 세금계산서 수집이나 관리도 자동화 니즈가 있으실까요?
+• 공급업체 지급까지 함께 관리하는 것도 필요하신 상황일까요?
+
+*6. 도입 목적*
+• 이번 도입을 통해 가장 우선적으로 해결하고 싶은 문제는 어떤 부분이실까요?
+• 꼭 필요하다고 생각하시는 기능이나 기준이 있으실까요?
+
+*7. 도입 시기*
+• 내부적으로 도입 목표 시점은 언제쯤으로 보고 계실까요?
+• 비교적 빠르게 도입이 필요한 상황이실까요, 아니면 여유 있게 검토 중이실까요?
+
+*8. 예산*
+• 관련 예산은 이미 확보되어 있으신 상태일까요?
+• 아니면 검토 후 확보 예정이실까요?
+
+*9. 검토 단계*
+• 현재는 정보 탐색 단계이실까요, 아니면 몇 가지 솔루션을 비교 중이신 단계일까요?
+
+*10. 의사결정*
+• 혹시 다음 미팅에는 의사결정자 분도 함께 참여 가능하실까요?"""
 
 
 # ──────────────────────────────────────────────────
