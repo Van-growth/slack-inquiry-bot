@@ -92,6 +92,15 @@ def research_company(company_name: str | None, email_domain: str | None) -> str:
 
 Your task is to conduct a structured pre-discovery research on a company before a sales discovery call.
 
+CRITICAL INSTRUCTIONS:
+- You MUST use the web_search tool to find accurate, up-to-date information. Do NOT rely on training data.
+- Search queries to run:
+  1. "{company_name} 대표이사 임직원 수 2025 2026"
+  2. "{company_name} 최신 뉴스 2025 2026"
+  3. "{company_name} site:thevc.kr OR site:besuccess.com OR site:venturesquare.net"
+- Only include news and information from the last 12 months (2025~2026). Exclude older articles.
+- If information cannot be confirmed via search, use "정보없음". Never guess or fabricate.
+
 ALL outputs MUST be written in Korean.
 Do NOT use English except for company names, product names, proper nouns.
 
@@ -117,15 +126,15 @@ Pain point categories to map:
 6. 프로젝트별 비용 관리 어려움
 7. 외근/현장 인력 비용 처리 문제
 
-DO NOT fabricate data. Use 정보없음 if unavailable.
-
 Company name: {company_name}, Email domain: {email_domain}"""
 
     response = anthropic_client.messages.create(
         model="claude-opus-4-6",
         max_tokens=4096,
+        tools=[{"type": "web_search_20250305", "name": "web_search"}],
         messages=[{"role": "user", "content": prompt}],
     )
+
     return next(
         (b.text for b in response.content if b.type == "text"),
         "회사 정보를 가져올 수 없습니다.",
