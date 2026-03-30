@@ -145,7 +145,7 @@ Company name: {company_name}, Email domain: {email_domain}"""
 # Step 3: 도입문의 질문 템플릿 반환
 # ──────────────────────────────────────────────────
 def generate_questions(
-    message_text: str, company_name: str | None, research_summary: str
+    message_text, company_name, research_summary
 ) -> str:
     return """*1. 도입 문의 배경*
 • 어떤 계기로 비용관리 솔루션을 알아보시게 되셨을까요?
