@@ -135,11 +135,8 @@ Company name: {company_name}, Email domain: {email_domain}"""
         messages=[{"role": "user", "content": prompt}],
     )
 
-    # 웹 검색 결과가 반영된 최종 텍스트 추출 (마지막 text 블록)
     text_blocks = [b.text for b in response.content if b.type == "text"]
     raw = text_blocks[-1] if text_blocks else "회사 정보를 가져올 수 없습니다."
-
-    # ```json 코드블록 제거
     start = raw.find("{")
     end = raw.rfind("}") + 1
     return raw[start:end] if start != -1 and end > start else raw
