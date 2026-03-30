@@ -201,24 +201,32 @@ def process_inquiry(channel_id: str, thread_ts: str, message_text: str):
 # ──────────────────────────────────────────────────
 @app.route("/slack/events", methods=["POST"])
 def slack_events():
+    print(f"[EVENT] 요청 수신: {request.method} {request.path}", flush=True)
     data = request.json or {}
 
     # URL 검증 핸드셰이크 (서명 검증 전에 처리)
     if data.get("type") == "url_verification":
+        print("[EVENT] URL verification challenge 처리", flush=True)
         return jsonify({"challenge": data["challenge"]})
 
     if not verify_slack_signature(request):
+        print("[EVENT] 서명 검증 실패 - 403 반환", flush=True)
         return jsonify({"error": "Invalid signature"}), 403
 
-    if data.get("type") != "event_callback":
+    event_type = data.get("type")
+    print(f"[EVENT] 이벤트 타입: {event_type}", flush=True)
+
+    if event_type != "event_callback":
         return jsonify({"ok": True})
 
     event = data.get("event", {})
     event_id = data.get("event_id", "")
+    print(f"[EVENT] event_id={event_id}, event.type={event.get('type')}, channel={event.get('channel')}, bot_id={event.get('bot_id')}, subtype={event.get('subtype')}", flush=True)
 
     # 중복 이벤트 스킵
     with processed_events_lock:
         if event_id in processed_events:
+            print(f"[EVENT] 중복 이벤트 스킵: {event_id}", flush=True)
             return jsonify({"ok": True})
         processed_events.add(event_id)
         # 메모리 절약: 1000개 초과 시 오래된 항목 제거
@@ -227,8 +235,10 @@ def slack_events():
 
     # 일반 메시지만 처리 (봇 메시지, 수정, 삭제 제외)
     if event.get("type") != "message":
+        print(f"[EVENT] 메시지 타입 아님, 스킵: {event.get('type')}", flush=True)
         return jsonify({"ok": True})
     if event.get("bot_id") or event.get("subtype"):
+        print(f"[EVENT] 봇 메시지 또는 subtype 이벤트 스킵", flush=True)
         return jsonify({"ok": True})
 
     channel_id = event.get("channel", "")
@@ -237,10 +247,14 @@ def slack_events():
 
     # 특정 채널만 처리 (SLACK_CHANNEL_ID 미설정 시 모든 채널)
     if SLACK_CHANNEL_ID and channel_id != SLACK_CHANNEL_ID:
+        print(f"[EVENT] 채널 불일치 스킵: 수신={channel_id}, 설정={SLACK_CHANNEL_ID}", flush=True)
         return jsonify({"ok": True})
 
     if not message_text:
+        print("[EVENT] 메시지 텍스트 없음, 스킵", flush=True)
         return jsonify({"ok": True})
+
+    print(f"[EVENT] 처리 시작: channel={channel_id}, ts={ts}, text={message_text[:50]!r}", flush=True)
 
     # 즉시 200 응답 후 백그라운드에서 처리
     executor.submit(process_inquiry, channel_id, ts, message_text)
