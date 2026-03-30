@@ -99,17 +99,14 @@ def research_company(company_name: str | None, email_domain: str | None) -> str:
         "5. 기술 스택 또는 주요 도구 (IT 기업인 경우)"
     )
 
-    with anthropic_client.messages.stream(
+    response = anthropic_client.messages.create(
         model="claude-opus-4-6",
         max_tokens=4096,
-        tools=[{"type": "web_search_20260209", "name": "web_search"}],
         messages=[{"role": "user", "content": prompt}],
-    ) as stream:
-        final = stream.get_final_message()
-
+    )
     return next(
-        (b.text for b in final.content if b.type == "text"),
-        "웹 검색 결과를 가져올 수 없습니다.",
+        (b.text for b in response.content if b.type == "text"),
+        "회사 정보를 가져올 수 없습니다.",
     )
 
 
