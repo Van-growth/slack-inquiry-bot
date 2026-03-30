@@ -135,10 +135,9 @@ Company name: {company_name}, Email domain: {email_domain}"""
         messages=[{"role": "user", "content": prompt}],
     )
 
-    return next(
-        (b.text for b in response.content if b.type == "text"),
-        "회사 정보를 가져올 수 없습니다.",
-    )
+    # 웹 검색 결과가 반영된 최종 텍스트 추출 (마지막 text 블록)
+    text_blocks = [b.text for b in response.content if b.type == "text"]
+    return text_blocks[-1] if text_blocks else "회사 정보를 가져올 수 없습니다."
 
 
 # ──────────────────────────────────────────────────
