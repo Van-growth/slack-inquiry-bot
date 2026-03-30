@@ -84,7 +84,7 @@ def parse_company_info(message_text: str) -> dict:
 # ──────────────────────────────────────────────────
 # Step 2: Claude + web_search로 회사 리서치
 # ──────────────────────────────────────────────────
-def research_company(company_name: str | None, email_domain: str | None) -> str:
+def research_company(company_name, email_domain) -> str:
     if not company_name and not email_domain:
         return "회사 정보를 특정할 수 없어 리서치를 건너뜁니다."
 
