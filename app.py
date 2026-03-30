@@ -181,47 +181,49 @@ def generate_questions(
 # ──────────────────────────────────────────────────
 # 리서치 JSON → Slack 메시지 포맷 변환
 # ──────────────────────────────────────────────────
-def format_research(raw: str) -> str:
-    text = raw.strip()
-    if text.startswith("```"):
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-        text = text.strip()
+def format_research_result(raw: str) -> str:
+    # { } 사이의 JSON 본문만 추출 (코드블록 등 앞뒤 텍스트 무시)
+    start = raw.find("{")
+    end = raw.rfind("}") + 1
     try:
-        d = json.loads(text)
+        d = json.loads(raw[start:end]) if start != -1 and end > start else {}
     except json.JSONDecodeError:
-        return raw  # 파싱 실패 시 원문 그대로 반환
+        print(f"[FORMAT] JSON 파싱 실패, 원본 반환. 원본: {raw[:200]!r}", flush=True)
+        return raw
+
+    def val(v):
+        return v if v and v != "정보없음" else "정보없음"
 
     s = d.get("summary", {})
     lines = [
-        "🏢 *회사 리서치 결과*",
+        "*🏢 회사 리서치 결과*",
         "",
-        f"• *회사명:* {d.get('company_name') or '정보없음'}",
-        f"• *설립연도:* {s.get('founded_year') or '정보없음'}",
-        f"• *대표이사:* {s.get('ceo') or '정보없음'}",
-        f"• *임직원 수:* {s.get('employee_count') or '정보없음'}",
-        f"• *사업 요약:* {s.get('business') or '정보없음'}",
-        f"• *최근 이슈:* {s.get('recent_issue') or '정보없음'}",
+        f"*회사명:* {val(d.get('company_name'))}",
+        f"*설립연도:* {val(s.get('founded_year'))}",
+        f"*대표이사:* {val(s.get('ceo'))}",
+        f"*임직원 수:* {val(s.get('employee_count'))}",
+        f"*사업 요약:* {val(s.get('business'))}",
+        f"*최근 이슈:* {val(s.get('recent_issue'))}",
     ]
 
     news_list = d.get("recent_news", [])[:3]
     if news_list:
-        lines += ["", "📊 *최근 뉴스*"]
+        lines += ["", "---", "*📰 최근 뉴스*"]
         for n in news_list:
-            lines.append(
-                f"• [{n.get('date', '')}] *{n.get('title', '')}*\n"
-                f"  {n.get('summary', '')}  |  _임팩트: {n.get('impact', '')}_"
-            )
+            lines += [
+                f"• *[{n.get('date', '')}] {n.get('title', '')}*",
+                f"  {n.get('summary', '')}",
+                f"  _임팩트: {n.get('impact', '')}_",
+            ]
 
     insight = d.get("spendit_insight", {})
     pain_points = insight.get("likely_pain_points", [])
     fit_hypothesis = insight.get("fit_hypothesis", [])
     discovery_questions = insight.get("discovery_questions", [])
 
-    lines += ["", "💡 *Spendit 관점 인사이트*"]
+    lines += ["", "---", "*💡 Spendit 인사이트*"]
     if pain_points:
-        lines.append("*주요 페인포인트:*")
+        lines += ["", "*주요 페인포인트:*"]
         lines += [f"• {p}" for p in pain_points]
     if fit_hypothesis:
         lines += ["", "*핏 가설:*"]
@@ -261,7 +263,7 @@ def process_inquiry(channel_id: str, thread_ts: str, message_text: str):
         # 2. 회사 리서치
         post(f"🔍 *회사 리서치 중입니다...* 잠시만 기다려주세요.\n\n{parsed_text}")
         research = research_company(company_name, email_domain)
-        post(format_research(research))
+        post(format_research_result(research))
 
         # 3. 질문 생성
         questions = generate_questions(message_text, company_name, research)
