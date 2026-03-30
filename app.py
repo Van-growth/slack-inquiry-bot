@@ -4,6 +4,7 @@ import hashlib
 import time
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, request, jsonify
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
@@ -21,6 +22,8 @@ SLACK_CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")  # #도입문의 채널 ID
 # 중복 이벤트 방지 (Slack은 동일 이벤트를 재전송할 수 있음)
 processed_events: set[str] = set()
 processed_events_lock = threading.Lock()
+
+executor = ThreadPoolExecutor(max_workers=5)
 
 
 # ──────────────────────────────────────────────────
@@ -239,13 +242,8 @@ def slack_events():
     if not message_text:
         return jsonify({"ok": True})
 
-    # 3초 내에 응답해야 하므로 백그라운드 스레드로 처리
-    t = threading.Thread(
-        target=process_inquiry,
-        args=(channel_id, ts, message_text),
-        daemon=True,
-    )
-    t.start()
+    # 즉시 200 응답 후 백그라운드에서 처리
+    executor.submit(process_inquiry, channel_id, ts, message_text)
 
     return jsonify({"ok": True})
 
