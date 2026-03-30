@@ -65,20 +65,6 @@ def parse_company_info(message_text: str) -> dict:
                 ),
             }
         ],
-        output_config={
-            "format": {
-                "type": "json_schema",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "company_name": {"type": ["string", "null"]},
-                        "email_domain": {"type": ["string", "null"]},
-                    },
-                    "required": ["company_name", "email_domain"],
-                    "additionalProperties": False,
-                },
-            }
-        },
     )
     text = next(b.text for b in response.content if b.type == "text")
     return json.loads(text)
