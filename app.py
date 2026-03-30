@@ -66,8 +66,19 @@ def parse_company_info(message_text: str) -> dict:
             }
         ],
     )
-    text = next(b.text for b in response.content if b.type == "text")
-    return json.loads(text)
+    text = next((b.text for b in response.content if b.type == "text"), "")
+    # 마크다운 코드블록 제거 후 JSON 파싱
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+        text = text.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        print(f"[PARSE] JSON 파싱 실패, 기본값 반환. 원본: {text!r}", flush=True)
+        return {"company_name": None, "email_domain": None}
 
 
 # ──────────────────────────────────────────────────
