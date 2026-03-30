@@ -198,14 +198,14 @@ def process_inquiry(channel_id: str, thread_ts: str, message_text: str):
 # ──────────────────────────────────────────────────
 @app.route("/slack/events", methods=["POST"])
 def slack_events():
-    if not verify_slack_signature(request):
-        return jsonify({"error": "Invalid signature"}), 403
-
     data = request.json or {}
 
-    # URL 검증 핸드셰이크
+    # URL 검증 핸드셰이크 (서명 검증 전에 처리)
     if data.get("type") == "url_verification":
         return jsonify({"challenge": data["challenge"]})
+
+    if not verify_slack_signature(request):
+        return jsonify({"error": "Invalid signature"}), 403
 
     if data.get("type") != "event_callback":
         return jsonify({"ok": True})
