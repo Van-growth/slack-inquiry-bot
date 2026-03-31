@@ -23,6 +23,10 @@ SLACK_CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")  # #도입문의 채널 ID
 processed_events: set[str] = set()
 processed_events_lock = threading.Lock()
 
+last_processed: dict[str, float] = {}
+last_processed_lock = threading.Lock()
+DUPLICATE_THRESHOLD_SECONDS = 60
+
 executor = ThreadPoolExecutor(max_workers=5)
 
 
@@ -340,6 +344,14 @@ def format_research_result(raw: str) -> str:
 # 전체 파이프라인 (백그라운드 스레드에서 실행)
 # ──────────────────────────────────────────────────
 def process_inquiry(channel_id: str, thread_ts: str, message_text: str):
+    with last_processed_lock:
+        now = time.time()
+        last = last_processed.get(channel_id, 0)
+        if now - last < DUPLICATE_THRESHOLD_SECONDS:
+            print(f"[DUPLICATE] 중복 요청 무시: channel={channel_id}, 경과={now-last:.1f}초", flush=True)
+            return
+        last_processed[channel_id] = now
+
     def post(text: str):
         slack_client.chat_postMessage(
             channel=channel_id,
