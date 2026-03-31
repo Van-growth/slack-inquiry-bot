@@ -113,7 +113,11 @@ Return ONLY JSON with this structure:
   "financials": {{"revenue": "", "operating_profit": "", "confidence": "확정|추정|정보없음"}},
   "investment_stage": "",
   "recent_news": [{{"date": "", "title": "", "summary": "", "impact": ""}}],
-  "spendit_insight": {{"likely_pain_points": [], "fit_hypothesis": [], "discovery_questions": []}},
+  "spendit_insight": {{
+    "likely_pain_points": ["페인포인트를 반드시 문자열로만 작성. 절대 객체 사용 금지. 예: '프로젝트별 비용 추적 어려움'"],
+    "fit_hypothesis": ["세일즈 메시지를 반드시 문자열로만 작성. 절대 객체 사용 금지. 예: '프로젝트별 비용 실시간 관리로 손익 투명성 확보'"],
+    "discovery_questions": ["질문을 반드시 문자열로만 작성. 절대 객체 사용 금지. 예: '현재 프로젝트별 비용은 어떻게 관리하시나요?'"]
+  }},
   "unknowns": []
 }}
 
@@ -128,6 +132,7 @@ Pain point categories to map:
 
 fit_hypothesis should be actionable sales messages like: '프로젝트별 비용 실시간 관리로 손익 투명성 확보', '현장 인력 경비 자동화로 수기 처리 제거'
 discovery_questions should be specific, open-ended questions tied to the company's business model.
+CRITICAL: likely_pain_points, fit_hypothesis, discovery_questions 는 반드시 문자열 배열(string array)이어야 함. 절대 객체 배열 사용 금지.
 
 Company name: {company_name}, Email domain: {email_domain}"""
 
@@ -271,26 +276,32 @@ def format_research_result(raw: str) -> str:
 
     lines += ["", "---", "*🧠 5. Spendit 관점 인사이트*"]
 
+    def to_str(item):
+        if isinstance(item, dict):
+            parts = []
+            if item.get("category"):
+                parts.append(f"*{item['category']}*")
+            if item.get("detail"):
+                parts.append(item["detail"])
+            if item.get("message"):
+                parts.append(item["message"])
+            return ": ".join(parts) if parts else str(item)
+        return str(item)
+
     pain_points = insight.get("likely_pain_points", [])
     if pain_points:
         lines += ["", "*🎯 핵심 Pain Point:*"]
-        for p in pain_points:
-            if isinstance(p, dict):
-                category = p.get("category", "")
-                detail = p.get("detail", "")
-                lines.append(f"• *{category}*: {detail}")
-            else:
-                lines.append(f"• {p}")
+        lines += [f"• {to_str(p)}" for p in pain_points]
 
     fit_hypothesis = insight.get("fit_hypothesis", [])
     if fit_hypothesis:
         lines += ["", "*💡 세일즈 포인트:*"]
-        lines += [f"• {h}" for h in fit_hypothesis]
+        lines += [f"• {to_str(h)}" for h in fit_hypothesis]
 
     discovery_questions = insight.get("discovery_questions", [])
     if discovery_questions:
         lines += ["", "*❓ 추천 디스커버리 질문:*"]
-        lines += [f"• {q}" for q in discovery_questions]
+        lines += [f"• {to_str(q)}" for q in discovery_questions]
 
     unknowns = d.get("unknowns", [])
     if unknowns:
