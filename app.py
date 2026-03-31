@@ -104,6 +104,8 @@ CRITICAL INSTRUCTIONS:
 ALL outputs MUST be written in Korean.
 Do NOT use English except for company names, product names, proper nouns.
 
+IMPORTANT: Your response must be a single, complete, valid JSON object. Do not truncate. Do not add any text before or after the JSON.
+
 Return ONLY JSON with this structure:
 {{
   "company_name": "",
