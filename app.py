@@ -200,13 +200,32 @@ def generate_questions(
 # 리서치 JSON → Slack 메시지 포맷 변환
 # ──────────────────────────────────────────────────
 def format_research_result(raw: str) -> str:
+    import re
+    # { } 사이 추출
     start = raw.find("{")
     end = raw.rfind("}") + 1
+    if start == -1 or end <= start:
+        return raw
+    json_str = raw[start:end]
+
+    # JSON 파싱 시도 1: 그대로
+    d = None
     try:
-        d = json.loads(raw[start:end]) if start != -1 and end > start else {}
-    except json.JSONDecodeError as e:
-        print(f"[FORMAT] JSON 파싱 실패. 에러: {e}", flush=True)
-        print(f"[FORMAT] 파싱 시도한 텍스트 앞 500자: {raw[start:end][:500]!r}", flush=True)
+        d = json.loads(json_str)
+    except json.JSONDecodeError:
+        # 시도 2: 줄바꿈 제거 후 재시도
+        try:
+            cleaned = json_str.replace('\n', ' ').replace('\r', ' ')
+            d = json.loads(cleaned)
+        except json.JSONDecodeError:
+            # 시도 3: json5 스타일 허용 (trailing comma 등)
+            try:
+                import ast
+                d = ast.literal_eval(json_str)
+            except Exception as e:
+                print(f"[FORMAT] 모든 파싱 실패: {e}", flush=True)
+                return f"⚠️ 리서치 결과 파싱 오류가 발생했습니다.\n\n```{raw[:2000]}```"
+    if d is None:
         return f"⚠️ 리서치 결과 파싱 오류가 발생했습니다.\n\n```{raw[:2000]}```"
 
     def val(v):
