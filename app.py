@@ -126,6 +126,9 @@ Pain point categories to map:
 6. 프로젝트별 비용 관리 어려움
 7. 외근/현장 인력 비용 처리 문제
 
+fit_hypothesis should be actionable sales messages like: '프로젝트별 비용 실시간 관리로 손익 투명성 확보', '현장 인력 경비 자동화로 수기 처리 제거'
+discovery_questions should be specific, open-ended questions tied to the company's business model.
+
 Company name: {company_name}, Email domain: {email_domain}"""
 
     response = anthropic_client.messages.create(
@@ -192,55 +195,104 @@ def generate_questions(
 # 리서치 JSON → Slack 메시지 포맷 변환
 # ──────────────────────────────────────────────────
 def format_research_result(raw: str) -> str:
-    # { } 사이의 JSON 본문만 추출 (코드블록 등 앞뒤 텍스트 무시)
     start = raw.find("{")
     end = raw.rfind("}") + 1
     try:
         d = json.loads(raw[start:end]) if start != -1 and end > start else {}
     except json.JSONDecodeError:
-        print(f"[FORMAT] JSON 파싱 실패, 원본 반환. 원본: {raw[:200]!r}", flush=True)
+        print(f"[FORMAT] JSON 파싱 실패. 원본: {raw[:200]!r}", flush=True)
         return raw
 
     def val(v):
         return v if v and v != "정보없음" else "정보없음"
 
     s = d.get("summary", {})
+    fin = d.get("financials", {})
+    overview = d.get("company_overview", {})
+    biz = d.get("business_area", {})
+    insight = d.get("spendit_insight", {})
+
     lines = [
-        "*🏢 회사 리서치 결과*",
+        f"*🔍 {val(d.get('company_name'))} 디스커버리콜 사전 리서치*",
         "",
-        f"*회사명:* {val(d.get('company_name'))}",
-        f"*설립연도:* {val(s.get('founded_year'))}",
-        f"*대표이사:* {val(s.get('ceo'))}",
-        f"*임직원 수:* {val(s.get('employee_count'))}",
-        f"*사업 요약:* {val(s.get('business'))}",
-        f"*최근 이슈:* {val(s.get('recent_issue'))}",
+        "*📊 요약 테이블*",
+        f"• *회사명:* {val(d.get('company_name'))}",
+        f"• *설립연도:* {val(s.get('founded_year'))}",
+        f"• *대표이사:* {val(s.get('ceo'))}",
+        f"• *임직원 수:* {val(s.get('employee_count'))}",
+        f"• *사업:* {val(s.get('business'))}",
+        f"• *매출:* {val(fin.get('revenue'))}",
+        f"• *투자단계:* {val(d.get('investment_stage'))}",
+        f"• *최근 이슈:* {val(s.get('recent_issue'))}",
+    ]
+
+    competitors = biz.get("competitors", [])
+    if competitors:
+        lines.append(f"• *경쟁사:* {', '.join(competitors)}")
+
+    lines += ["", "---", "*🏢 1. 회사 개요*"]
+    founding = val(overview.get("founding_background"))
+    if founding != "정보없음":
+        lines += [f"*설립 배경:* {founding}"]
+    recent_dev = val(overview.get("recent_developments"))
+    if recent_dev != "정보없음":
+        lines += ["", f"*최근 동향:* {recent_dev}"]
+    org = val(overview.get("organization"))
+    if org != "정보없음":
+        lines += ["", f"*조직 구조:* {org}"]
+
+    lines += ["", "---", "*💼 2. 사업 영역*"]
+    products = biz.get("products_services", [])
+    if products:
+        lines += ["*주력 서비스:*"] + [f"• {p}" for p in products]
+    industries = biz.get("industries", [])
+    customers = biz.get("customers", [])
+    if industries or customers:
+        lines += ["", "*주요 산업 / 고객:*"]
+        lines += [f"• {i}" for i in industries]
+        lines += [f"• {c}" for c in customers]
+
+    lines += ["", "---", "*💰 3. 재무 현황*"]
+    lines += [
+        f"• *매출:* {val(fin.get('revenue'))}",
+        f"• *영업이익:* {val(fin.get('operating_profit'))}",
+        f"• *신뢰도:* {val(fin.get('confidence'))}",
     ]
 
     news_list = d.get("recent_news", [])[:3]
     if news_list:
-        lines += ["", "---", "*📰 최근 뉴스*"]
+        lines += ["", "---", "*📰 4. 최근 뉴스*"]
         for n in news_list:
             lines += [
                 f"• *[{n.get('date', '')}] {n.get('title', '')}*",
                 f"  {n.get('summary', '')}",
-                f"  _임팩트: {n.get('impact', '')}_",
+                f"  _→ 임팩트: {n.get('impact', '')}_",
             ]
 
-    insight = d.get("spendit_insight", {})
-    pain_points = insight.get("likely_pain_points", [])
-    fit_hypothesis = insight.get("fit_hypothesis", [])
-    discovery_questions = insight.get("discovery_questions", [])
+    lines += ["", "---", "*🧠 5. Spendit 관점 인사이트*"]
 
-    lines += ["", "---", "*💡 Spendit 인사이트*"]
+    pain_points = insight.get("likely_pain_points", [])
     if pain_points:
-        lines += ["", "*주요 페인포인트:*"]
+        lines += ["", "*🎯 핵심 Pain Point:*"]
         lines += [f"• {p}" for p in pain_points]
+
+    fit_hypothesis = insight.get("fit_hypothesis", [])
     if fit_hypothesis:
-        lines += ["", "*핏 가설:*"]
+        lines += ["", "*💡 세일즈 포인트:*"]
         lines += [f"• {h}" for h in fit_hypothesis]
+
+    discovery_questions = insight.get("discovery_questions", [])
     if discovery_questions:
-        lines += ["", "*추천 디스커버리 질문:*"]
+        lines += ["", "*❓ 추천 디스커버리 질문:*"]
         lines += [f"• {q}" for q in discovery_questions]
+
+    unknowns = d.get("unknowns", [])
+    if unknowns:
+        lines += ["", "---", "*⚠️ 확인 필요 항목:*"]
+        lines += [f"• {u}" for u in unknowns]
+
+    if fit_hypothesis:
+        lines += ["", "---", f"*🔥 한줄 전략:* {fit_hypothesis[0]}"]
 
     return "\n".join(lines)
 
