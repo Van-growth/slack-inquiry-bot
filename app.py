@@ -274,7 +274,13 @@ def format_research_result(raw: str) -> str:
     pain_points = insight.get("likely_pain_points", [])
     if pain_points:
         lines += ["", "*🎯 핵심 Pain Point:*"]
-        lines += [f"• {p}" for p in pain_points]
+        for p in pain_points:
+            if isinstance(p, dict):
+                category = p.get("category", "")
+                detail = p.get("detail", "")
+                lines.append(f"• *{category}*: {detail}")
+            else:
+                lines.append(f"• {p}")
 
     fit_hypothesis = insight.get("fit_hypothesis", [])
     if fit_hypothesis:
