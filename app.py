@@ -204,9 +204,10 @@ def format_research_result(raw: str) -> str:
     end = raw.rfind("}") + 1
     try:
         d = json.loads(raw[start:end]) if start != -1 and end > start else {}
-    except json.JSONDecodeError:
-        print(f"[FORMAT] JSON 파싱 실패. 원본: {raw[:200]!r}", flush=True)
-        return raw
+    except json.JSONDecodeError as e:
+        print(f"[FORMAT] JSON 파싱 실패. 에러: {e}", flush=True)
+        print(f"[FORMAT] 파싱 시도한 텍스트 앞 500자: {raw[start:end][:500]!r}", flush=True)
+        return f"⚠️ 리서치 결과 파싱 오류가 발생했습니다.\n\n```{raw[:2000]}```"
 
     def val(v):
         return v if v and v != "정보없음" else "정보없음"
