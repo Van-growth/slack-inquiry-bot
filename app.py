@@ -52,7 +52,7 @@ def verify_slack_signature(req) -> bool:
 # ──────────────────────────────────────────────────
 def parse_company_info(message_text: str) -> dict:
     response = anthropic_client.messages.create(
-        model="claude-opus-4-6",
+        model="claude-sonnet-4-6",
         max_tokens=512,
         messages=[
             {
@@ -139,8 +139,8 @@ CRITICAL: likely_pain_points, fit_hypothesis, discovery_questions 는 반드시 
 Company name: {company_name}, Email domain: {email_domain}"""
 
     response = anthropic_client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=4096,
+        model="claude-sonnet-4-6",
+        max_tokens=8192,
         tools=[{"type": "web_search_20250305", "name": "web_search"}],
         messages=[{"role": "user", "content": prompt}],
     )
