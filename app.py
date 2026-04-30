@@ -64,7 +64,7 @@ def verify_slack_signature(req) -> bool:
 # ──────────────────────────────────────────────────
 def parse_company_info(message_text: str) -> dict:
     response = anthropic_client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-haiku-4-5-20251001",
         max_tokens=512,
         messages=[
             {
@@ -222,7 +222,7 @@ Company name: {company_name}, Email domain: {email_domain}
 === End of Context ==="""
 
     response = anthropic_client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-haiku-4-5-20251001",
         max_tokens=4096,
         messages=[{"role": "user", "content": prompt}],
     )
