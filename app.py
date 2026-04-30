@@ -16,8 +16,10 @@ slack_client = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
 anthropic_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 SLACK_SIGNING_SECRET = os.environ["SLACK_SIGNING_SECRET"]
-SLACK_USER_ID = os.environ["SLACK_USER_ID"]          # 박슬기 슬랙 유저 ID
 SLACK_CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")  # #도입문의 채널 ID (선택)
+
+MENTION_SMALL = "<@D08K3KKKR36> <@D08HPVD794J>"  # 임직원 100명 미만
+MENTION_LARGE = "<@D08GPQ50TPZ>"                  # 임직원 100명 이상 / fallback
 
 # 중복 이벤트 방지 (Slack은 동일 이벤트를 재전송할 수 있음)
 processed_events: set[str] = set()
@@ -341,6 +343,55 @@ def format_research_result(raw: str) -> str:
 
 
 # ──────────────────────────────────────────────────
+# 임직원 수 기반 멘션 결정
+# ──────────────────────────────────────────────────
+def pick_mention_by_employee_count(research_raw: str) -> str:
+    import re
+    try:
+        start = research_raw.find("{")
+        end = research_raw.rfind("}") + 1
+        if start == -1 or end <= start:
+            return MENTION_LARGE
+        json_str = research_raw[start:end]
+        try:
+            d = json.loads(json_str)
+        except json.JSONDecodeError:
+            try:
+                d = json.loads(json_str.replace('\n', ' ').replace('\r', ' '))
+            except json.JSONDecodeError:
+                import ast
+                d = ast.literal_eval(json_str)
+
+        candidates = []
+        s = d.get("summary") or {}
+        candidates.append(s.get("employee_count"))
+        overview = d.get("company_overview") or {}
+        ec = overview.get("employee_count")
+        if isinstance(ec, dict):
+            candidates.append(ec.get("value"))
+        else:
+            candidates.append(ec)
+
+        for raw in candidates:
+            if not raw:
+                continue
+            text = str(raw)
+            nums = re.findall(r"\d[\d,]*", text)
+            if not nums:
+                continue
+            parsed = [int(n.replace(",", "")) for n in nums]
+            count = max(parsed)
+            print(f"[MENTION] employee_count 파싱: {text!r} → {count}", flush=True)
+            return MENTION_SMALL if count < 100 else MENTION_LARGE
+
+        print(f"[MENTION] employee_count 숫자 추출 실패, fallback", flush=True)
+        return MENTION_LARGE
+    except Exception as e:
+        print(f"[MENTION] 파싱 예외, fallback: {e}", flush=True)
+        return MENTION_LARGE
+
+
+# ──────────────────────────────────────────────────
 # 전체 파이프라인 (백그라운드 스레드에서 실행)
 # ──────────────────────────────────────────────────
 def process_inquiry(channel_id: str, thread_ts: str, message_text: str):
@@ -382,9 +433,10 @@ def process_inquiry(channel_id: str, thread_ts: str, message_text: str):
         questions = generate_questions(message_text, company_name, research)
         post(f"📋 *도입문의 미팅 질문 10개*\n\n{questions}")
 
-        # 4. 박슬기 멘션
+        # 4. 임직원 수 기반 담당자 멘션
+        mention = pick_mention_by_employee_count(research)
         post(
-            f"<@{SLACK_USER_ID}> 새로운 도입문의가 접수되었습니다! "
+            f"{mention} 새로운 도입문의가 접수되었습니다! "
             "위 리서치 내용과 질문 목록을 참고해주세요 🙌"
         )
 
