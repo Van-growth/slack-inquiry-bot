@@ -24,8 +24,6 @@ SLACK_CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")  # #도입문의 채널 ID
 NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET")
 
-MENTION_SMALL = "<@U081K76NJ95> <@U08GPQ1HEMD>"  # 임직원 100명 미만
-MENTION_LARGE = "<@U08GPQ48FRD>"                  # 임직원 100명 이상 / fallback
 
 # 중복 이벤트 방지 (Slack은 동일 이벤트를 재전송할 수 있음)
 processed_events: set[str] = set()
@@ -525,6 +523,23 @@ def _extract_employee_number(text: str) -> int | None:
     return None
 
 
+def _mention_for_count(count: int) -> str:
+    if count < 20:
+        return "<@U081K76NJ95> <@U08GPQ1HEMD>"      # 1-20명
+    if count < 50:
+        return "<@U081K76NJ95> <@U08GPQ1HEMD>"      # 20-50명
+    if count < 100:
+        return "<@U081K76NJ95> <@U08GPQ1HEMD>"      # 50-100명
+    if count < 500:
+        return "<@U08GPQ48FRD>"                      # 100-500명
+    if count < 1000:
+        return "<@U08GPQ48FRD>"                      # 500-1000명
+    return "<@U08GPQ48FRD>"                          # 1000명 이상
+
+
+MENTION_FALLBACK = "<@U08GPQ48FRD>"  # 파싱 실패 시
+
+
 def pick_mention_by_employee_count(research_raw: str) -> str:
     try:
         d = parse_research_json(research_raw)
@@ -533,8 +548,8 @@ def pick_mention_by_employee_count(research_raw: str) -> str:
             count = _extract_employee_number(research_raw)
             if count is not None:
                 print(f"[MENTION] raw 텍스트에서 추출: {count}", flush=True)
-                return MENTION_SMALL if count < 100 else MENTION_LARGE
-            return MENTION_LARGE
+                return _mention_for_count(count)
+            return MENTION_FALLBACK
 
         primary_candidates: list = []
         s = d.get("summary") or {}
@@ -550,7 +565,7 @@ def pick_mention_by_employee_count(research_raw: str) -> str:
             count = _extract_employee_number(raw)
             if count is not None:
                 print(f"[MENTION] primary employee_count: {raw!r} → {count}", flush=True)
-                return MENTION_SMALL if count < 100 else MENTION_LARGE
+                return _mention_for_count(count)
 
         secondary_texts: list[str] = []
         for key in ("business", "recent_issue"):
@@ -577,13 +592,13 @@ def pick_mention_by_employee_count(research_raw: str) -> str:
             count = _extract_employee_number(txt)
             if count is not None and 1 <= count <= 1_000_000:
                 print(f"[MENTION] secondary 텍스트에서 추출: {txt[:80]!r} → {count}", flush=True)
-                return MENTION_SMALL if count < 100 else MENTION_LARGE
+                return _mention_for_count(count)
 
         print("[MENTION] 모든 필드에서 임직원 수 추출 실패, fallback", flush=True)
-        return MENTION_LARGE
+        return MENTION_FALLBACK
     except Exception as e:
         print(f"[MENTION] 파싱 예외, fallback: {e}", flush=True)
-        return MENTION_LARGE
+        return MENTION_FALLBACK
 
 
 # ──────────────────────────────────────────────────
