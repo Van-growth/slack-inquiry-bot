@@ -3,12 +3,15 @@ import hmac
 import hashlib
 import time
 import json
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, request, jsonify
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 import anthropic
+import requests
+from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
@@ -17,6 +20,9 @@ anthropic_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 SLACK_SIGNING_SECRET = os.environ["SLACK_SIGNING_SECRET"]
 SLACK_CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")  # #도입문의 채널 ID (선택)
+
+NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID")
+NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET")
 
 MENTION_SMALL = "<@D08K3KKKR36> <@D08HPVD794J>"  # 임직원 100명 미만
 MENTION_LARGE = "<@D08GPQ50TPZ>"                  # 임직원 100명 이상 / fallback
@@ -88,24 +94,91 @@ def parse_company_info(message_text: str) -> dict:
 
 
 # ──────────────────────────────────────────────────
-# Step 2: Claude + web_search로 회사 리서치
+# 네이버 검색 API 호출
+# ──────────────────────────────────────────────────
+def _strip_html(text: str) -> str:
+    if not text:
+        return ""
+    try:
+        cleaned = BeautifulSoup(text, "html.parser").get_text(" ", strip=True)
+    except Exception:
+        cleaned = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def naver_search(endpoint: str, query: str, display: int) -> list[dict]:
+    if not NAVER_CLIENT_ID or not NAVER_CLIENT_SECRET:
+        print("[NAVER] 자격증명 없음, 검색 스킵", flush=True)
+        return []
+    url = f"https://openapi.naver.com/v1/search/{endpoint}.json"
+    headers = {
+        "X-Naver-Client-Id": NAVER_CLIENT_ID,
+        "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+    }
+    params = {"query": query, "display": display}
+    try:
+        r = requests.get(url, headers=headers, params=params, timeout=10)
+        r.raise_for_status()
+        return r.json().get("items", []) or []
+    except Exception as e:
+        print(f"[NAVER] {endpoint} 검색 실패: {e}", flush=True)
+        return []
+
+
+def collect_naver_context(company_name: str) -> str:
+    news_items = naver_search("news", company_name, 10)
+    web_items = naver_search("webkr", company_name, 5)
+
+    blocks: list[str] = []
+    if news_items:
+        blocks.append("[뉴스 검색 결과]")
+        for i, it in enumerate(news_items, 1):
+            title = _strip_html(it.get("title", ""))
+            desc = _strip_html(it.get("description", ""))
+            pub = it.get("pubDate", "")
+            link = it.get("link", "")
+            blocks.append(f"{i}. {title}")
+            if pub:
+                blocks.append(f"   날짜: {pub}")
+            if desc:
+                blocks.append(f"   요약: {desc}")
+            if link:
+                blocks.append(f"   링크: {link}")
+    if web_items:
+        blocks.append("")
+        blocks.append("[웹문서 검색 결과]")
+        for i, it in enumerate(web_items, 1):
+            title = _strip_html(it.get("title", ""))
+            desc = _strip_html(it.get("description", ""))
+            link = it.get("link", "")
+            blocks.append(f"{i}. {title}")
+            if desc:
+                blocks.append(f"   요약: {desc}")
+            if link:
+                blocks.append(f"   링크: {link}")
+    return "\n".join(blocks).strip()
+
+
+# ──────────────────────────────────────────────────
+# Step 2: 네이버 검색 + Claude 요약으로 회사 리서치
 # ──────────────────────────────────────────────────
 def research_company(company_name, email_domain) -> str:
     if not company_name and not email_domain:
         return "회사 정보를 특정할 수 없어 리서치를 건너뜁니다."
+
+    search_query = company_name or email_domain
+    naver_context = collect_naver_context(search_query) if search_query else ""
+    if not naver_context:
+        naver_context = "(네이버 검색 결과 없음)"
 
     prompt = f"""You are a B2B SaaS sales research assistant for Spendit (expense management platform).
 
 Your task is to conduct a structured pre-discovery research on a company before a sales discovery call.
 
 CRITICAL INSTRUCTIONS:
-- You MUST use the web_search tool to find accurate, up-to-date information. Do NOT rely on training data.
-- Search queries to run:
-  1. "{company_name} 대표이사 임직원 수 2025 2026"
-  2. "{company_name} 최신 뉴스 2025 2026"
-  3. "{company_name} site:thevc.kr OR site:besuccess.com OR site:venturesquare.net"
+- The following is the search context retrieved from Naver Search API (news + web). Base your answer ONLY on this context. Do NOT use training data, do NOT fabricate.
 - Only include news and information from the last 12 months (2025~2026). Exclude older articles.
-- If information cannot be confirmed via search, use "정보없음". Never guess or fabricate.
+- If information cannot be confirmed from the search context, use "정보없음". Never guess.
 
 ALL outputs MUST be written in Korean.
 Do NOT use English except for company names, product names, proper nouns.
@@ -142,12 +215,15 @@ fit_hypothesis should be actionable sales messages like: '프로젝트별 비용
 discovery_questions should be specific, open-ended questions tied to the company's business model.
 CRITICAL: likely_pain_points, fit_hypothesis, discovery_questions 는 반드시 문자열 배열(string array)이어야 함. 절대 객체 배열 사용 금지.
 
-Company name: {company_name}, Email domain: {email_domain}"""
+Company name: {company_name}, Email domain: {email_domain}
+
+=== Naver Search Context ===
+{naver_context}
+=== End of Context ==="""
 
     response = anthropic_client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=8192,
-        tools=[{"type": "web_search_20250305", "name": "web_search"}],
+        max_tokens=4096,
         messages=[{"role": "user", "content": prompt}],
     )
 

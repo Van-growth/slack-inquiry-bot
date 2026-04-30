@@ -16,3 +16,7 @@ services:
         sync: false
       - key: SLACK_CHANNEL_ID
         sync: false
+      - key: NAVER_CLIENT_ID
+        sync: false
+      - key: NAVER_CLIENT_SECRET
+        sync: false
