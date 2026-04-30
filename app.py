@@ -278,36 +278,113 @@ def generate_questions(
 
 
 # ──────────────────────────────────────────────────
-# 리서치 JSON → Slack 메시지 포맷 변환
+# 리서치 JSON 파싱 (공용 헬퍼)
 # ──────────────────────────────────────────────────
-def format_research_result(raw: str) -> str:
-    import re
-    # { } 사이 추출
+def _close_unclosed_json(js: str) -> str | None:
+    depth_obj = 0
+    depth_arr = 0
+    in_str = False
+    escape = False
+    for ch in js:
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            depth_obj += 1
+        elif ch == "}":
+            depth_obj -= 1
+        elif ch == "[":
+            depth_arr += 1
+        elif ch == "]":
+            depth_arr -= 1
+    if in_str or (depth_obj <= 0 and depth_arr <= 0):
+        return None
+    closing = ("]" * max(0, depth_arr)) + ("}" * max(0, depth_obj))
+    return js + closing
+
+
+def parse_research_json(raw: str) -> dict | None:
+    if not raw:
+        return None
     start = raw.find("{")
     end = raw.rfind("}") + 1
     if start == -1 or end <= start:
-        return raw
-    json_str = raw[start:end]
+        return None
+    js = raw[start:end]
 
-    # JSON 파싱 시도 1: 그대로
-    d = None
-    try:
-        d = json.loads(json_str)
-    except json.JSONDecodeError:
-        # 시도 2: 줄바꿈 제거 후 재시도
+    no_trailing = re.sub(r",\s*([}\]])", r"\1", js)
+    no_ctrl = re.sub(r"[\x00-\x1f]+", " ", no_trailing)
+
+    for candidate in (js, js.replace("\n", " ").replace("\r", " "), no_trailing, no_ctrl):
         try:
-            cleaned = json_str.replace('\n', ' ').replace('\r', ' ')
-            d = json.loads(cleaned)
+            v = json.loads(candidate)
+            if isinstance(v, dict):
+                return v
         except json.JSONDecodeError:
-            # 시도 3: json5 스타일 허용 (trailing comma 등)
-            try:
-                import ast
-                d = ast.literal_eval(json_str)
-            except Exception as e:
-                print(f"[FORMAT] 모든 파싱 실패: {e}", flush=True)
-                return f"⚠️ 리서치 결과 파싱 오류가 발생했습니다.\n\n```{raw[:2000]}```"
+            continue
+
+    try:
+        import ast
+        v = ast.literal_eval(no_ctrl)
+        if isinstance(v, dict):
+            return v
+    except Exception:
+        pass
+
+    closed = _close_unclosed_json(no_ctrl)
+    if closed:
+        try:
+            v = json.loads(closed)
+            if isinstance(v, dict):
+                return v
+        except json.JSONDecodeError:
+            pass
+
+    return None
+
+
+def _fallback_format(raw: str) -> str:
+    def grab(field: str) -> str:
+        m = re.search(rf'"{field}"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"', raw)
+        if not m:
+            return "정보없음"
+        v = m.group(1).strip()
+        return v if v and v != "정보없음" else "정보없음"
+
+    cn = grab("company_name")
+    lines = [
+        f"*🔍 {cn if cn != '정보없음' else '회사'} 디스커버리콜 사전 리서치 (요약본)*",
+        "",
+        "_⚠️ 응답 일부 파싱에 실패하여 핵심 정보만 표시합니다._",
+        "",
+        "*📊 요약 테이블*",
+        f"• *회사명:* {cn}",
+        f"• *설립연도:* {grab('founded_year')}",
+        f"• *대표이사:* {grab('ceo')}",
+        f"• *임직원 수:* {grab('employee_count')}",
+        f"• *사업:* {grab('business')}",
+        f"• *매출:* {grab('revenue')}",
+        f"• *최근 이슈:* {grab('recent_issue')}",
+    ]
+    return "\n".join(lines)
+
+
+# ──────────────────────────────────────────────────
+# 리서치 JSON → Slack 메시지 포맷 변환
+# ──────────────────────────────────────────────────
+def format_research_result(raw: str) -> str:
+    d = parse_research_json(raw)
     if d is None:
-        return f"⚠️ 리서치 결과 파싱 오류가 발생했습니다.\n\n```{raw[:2000]}```"
+        print("[FORMAT] JSON 파싱 실패, 폴백 포맷 사용", flush=True)
+        return _fallback_format(raw)
 
     def val(v):
         return v if v and v != "정보없음" else "정보없음"
@@ -418,46 +495,91 @@ def format_research_result(raw: str) -> str:
 # ──────────────────────────────────────────────────
 # 임직원 수 기반 멘션 결정
 # ──────────────────────────────────────────────────
-def pick_mention_by_employee_count(research_raw: str) -> str:
-    import re
-    try:
-        start = research_raw.find("{")
-        end = research_raw.rfind("}") + 1
-        if start == -1 or end <= start:
-            return MENTION_LARGE
-        json_str = research_raw[start:end]
-        try:
-            d = json.loads(json_str)
-        except json.JSONDecodeError:
-            try:
-                d = json.loads(json_str.replace('\n', ' ').replace('\r', ' '))
-            except json.JSONDecodeError:
-                import ast
-                d = ast.literal_eval(json_str)
+def _extract_employee_number(text: str) -> int | None:
+    if not text:
+        return None
+    t = str(text)
+    if "정보없음" in t and not re.search(r"\d", t):
+        return None
 
-        candidates = []
+    patterns = [
+        r"(?:임직원|직원|구성원|employees?)\s*(?:수)?\s*(?:는|은|:)?\s*약?\s*([\d,]+)\s*(?:여)?\s*명?",
+        r"약\s*([\d,]+)\s*(?:여)?\s*명",
+        r"([\d,]+)\s*(?:여)?\s*명\s*(?:의|규모|수준|이상|미만|내외|안팎)",
+        r"([\d,]+)\s*(?:여)?\s*명",
+    ]
+    for pat in patterns:
+        m = re.search(pat, t, re.IGNORECASE)
+        if m:
+            try:
+                return int(m.group(1).replace(",", ""))
+            except ValueError:
+                continue
+
+    nums = re.findall(r"\d[\d,]*", t)
+    if nums:
+        try:
+            return max(int(n.replace(",", "")) for n in nums)
+        except ValueError:
+            return None
+    return None
+
+
+def pick_mention_by_employee_count(research_raw: str) -> str:
+    try:
+        d = parse_research_json(research_raw)
+        if not d:
+            print("[MENTION] JSON 파싱 실패, raw 텍스트 스캔", flush=True)
+            count = _extract_employee_number(research_raw)
+            if count is not None:
+                print(f"[MENTION] raw 텍스트에서 추출: {count}", flush=True)
+                return MENTION_SMALL if count < 100 else MENTION_LARGE
+            return MENTION_LARGE
+
+        primary_candidates: list = []
         s = d.get("summary") or {}
-        candidates.append(s.get("employee_count"))
+        primary_candidates.append(s.get("employee_count"))
         overview = d.get("company_overview") or {}
         ec = overview.get("employee_count")
         if isinstance(ec, dict):
-            candidates.append(ec.get("value"))
+            primary_candidates.append(ec.get("value"))
         else:
-            candidates.append(ec)
+            primary_candidates.append(ec)
 
-        for raw in candidates:
-            if not raw:
-                continue
-            text = str(raw)
-            nums = re.findall(r"\d[\d,]*", text)
-            if not nums:
-                continue
-            parsed = [int(n.replace(",", "")) for n in nums]
-            count = max(parsed)
-            print(f"[MENTION] employee_count 파싱: {text!r} → {count}", flush=True)
-            return MENTION_SMALL if count < 100 else MENTION_LARGE
+        for raw in primary_candidates:
+            count = _extract_employee_number(raw)
+            if count is not None:
+                print(f"[MENTION] primary employee_count: {raw!r} → {count}", flush=True)
+                return MENTION_SMALL if count < 100 else MENTION_LARGE
 
-        print(f"[MENTION] employee_count 숫자 추출 실패, fallback", flush=True)
+        secondary_texts: list[str] = []
+        for key in ("business", "recent_issue"):
+            v = s.get(key)
+            if v:
+                secondary_texts.append(str(v))
+        for key in ("founding_background", "recent_developments", "organization"):
+            v = overview.get(key)
+            if v:
+                secondary_texts.append(str(v))
+        for n in (d.get("recent_news") or [])[:5]:
+            if isinstance(n, dict):
+                for key in ("summary", "title", "impact"):
+                    v = n.get(key)
+                    if v:
+                        secondary_texts.append(str(v))
+        for u in d.get("unknowns") or []:
+            if u:
+                secondary_texts.append(str(u))
+
+        for txt in secondary_texts:
+            if not re.search(r"임직원|직원|구성원|employees?|명", txt, re.IGNORECASE):
+                continue
+            count = _extract_employee_number(txt)
+            if count is not None and 1 <= count <= 1_000_000:
+                print(f"[MENTION] secondary 텍스트에서 추출: {txt[:80]!r} → {count}", flush=True)
+                return MENTION_SMALL if count < 100 else MENTION_LARGE
+
+        print("[MENTION] 모든 필드에서 임직원 수 추출 실패, fallback", flush=True)
         return MENTION_LARGE
     except Exception as e:
         print(f"[MENTION] 파싱 예외, fallback: {e}", flush=True)
