@@ -24,8 +24,8 @@ SLACK_CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")  # #도입문의 채널 ID
 NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET")
 
-MENTION_SMALL = "<@D08K3KKKR36> <@D08HPVD794J>"  # 임직원 100명 미만
-MENTION_LARGE = "<@D08GPQ50TPZ>"                  # 임직원 100명 이상 / fallback
+MENTION_SMALL = "<@U081K76NJ95> <@U08GPQ1HEMD>"  # 임직원 100명 미만
+MENTION_LARGE = "<@U08GPQ48FRD>"                  # 임직원 100명 이상 / fallback
 
 # 중복 이벤트 방지 (Slack은 동일 이벤트를 재전송할 수 있음)
 processed_events: set[str] = set()
