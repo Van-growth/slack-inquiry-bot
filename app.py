@@ -33,6 +33,18 @@ last_processed: dict[str, float] = {}
 last_processed_lock = threading.Lock()
 DUPLICATE_THRESHOLD_SECONDS = 60
 
+# 같은 회사/도메인의 첫 문의에만 반응 (재시작 시 초기화)
+processed_companies: set[str] = set()
+processed_companies_lock = threading.Lock()
+
+
+def _company_key(company_name, email_domain) -> str | None:
+    if email_domain and str(email_domain).strip():
+        return f"d:{str(email_domain).strip().lower()}"
+    if company_name and str(company_name).strip():
+        return f"c:{str(company_name).strip().lower()}"
+    return None
+
 executor = ThreadPoolExecutor(max_workers=5)
 
 
@@ -643,6 +655,18 @@ def process_inquiry(channel_id: str, thread_ts: str, message_text: str):
         info = parse_company_info(message_text)
         company_name = info.get("company_name")
         email_domain = info.get("email_domain")
+
+        # 같은 회사/도메인 중복 문의는 silent skip (재시작 시 초기화)
+        key = _company_key(company_name, email_domain)
+        if key:
+            with processed_companies_lock:
+                if key in processed_companies:
+                    print(f"[DUPLICATE-COMPANY] 이미 처리한 회사 스킵: {key}", flush=True)
+                    return
+                processed_companies.add(key)
+                if len(processed_companies) > 1000:
+                    processed_companies.clear()
+                    processed_companies.add(key)
 
         parsed_summary = []
         if company_name:
