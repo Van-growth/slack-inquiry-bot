@@ -493,7 +493,7 @@ def format_research_result(raw: str) -> str:
 # ──────────────────────────────────────────────────
 # 임직원 수 기반 멘션 결정
 # ──────────────────────────────────────────────────
-def _extract_employee_number(text: str) -> int | None:
+def _extract_employee_number(text: str, strict: bool = False) -> int | None:
     if not text:
         return None
     t = str(text)
@@ -506,6 +506,8 @@ def _extract_employee_number(text: str) -> int | None:
         r"([\d,]+)\s*(?:여)?\s*명\s*(?:의|규모|수준|이상|미만|내외|안팎)",
         r"([\d,]+)\s*(?:여)?\s*명",
     ]
+    if strict:
+        patterns = patterns[:1]
     for pat in patterns:
         m = re.search(pat, t, re.IGNORECASE)
         if m:
@@ -513,6 +515,9 @@ def _extract_employee_number(text: str) -> int | None:
                 return int(m.group(1).replace(",", ""))
             except ValueError:
                 continue
+
+    if strict:
+        return None
 
     nums = re.findall(r"\d[\d,]*", t)
     if nums:
@@ -537,7 +542,19 @@ def _mention_for_count(count: int) -> str:
     return "<@U08GPQ48FRD>"                          # 1000명 이상
 
 
-MENTION_FALLBACK = "<@U08GPQ48FRD>"  # 파싱 실패 시
+MENTION_FALLBACK = "<@U081K76NJ95> <@U08GPQ1HEMD>"  # 임직원 수 파싱 실패 시 (슬기 제외)
+
+# 멘션에서 제외할 user ID (슬기는 100명+ 구간 단독 담당이라
+# 다른 구간에 잘못 끼지 않도록 안전망. 결과가 모두 제외돼 비면 원본 유지)
+EXCLUDED_USER_IDS = {"U08GPQ48FRD"}
+
+
+def _filter_excluded(mention: str) -> str:
+    if not mention:
+        return mention
+    ids = re.findall(r"<@([A-Z0-9]+)>", mention)
+    kept = [f"<@{i}>" for i in ids if i not in EXCLUDED_USER_IDS]
+    return " ".join(kept) if kept else mention
 
 
 def pick_mention_by_employee_count(research_raw: str) -> str:
@@ -548,8 +565,8 @@ def pick_mention_by_employee_count(research_raw: str) -> str:
             count = _extract_employee_number(research_raw)
             if count is not None:
                 print(f"[MENTION] raw 텍스트에서 추출: {count}", flush=True)
-                return _mention_for_count(count)
-            return MENTION_FALLBACK
+                return _filter_excluded(_mention_for_count(count))
+            return _filter_excluded(MENTION_FALLBACK)
 
         primary_candidates: list = []
         s = d.get("summary") or {}
@@ -565,7 +582,7 @@ def pick_mention_by_employee_count(research_raw: str) -> str:
             count = _extract_employee_number(raw)
             if count is not None:
                 print(f"[MENTION] primary employee_count: {raw!r} → {count}", flush=True)
-                return _mention_for_count(count)
+                return _filter_excluded(_mention_for_count(count))
 
         secondary_texts: list[str] = []
         for key in ("business", "recent_issue"):
@@ -587,18 +604,18 @@ def pick_mention_by_employee_count(research_raw: str) -> str:
                 secondary_texts.append(str(u))
 
         for txt in secondary_texts:
-            if not re.search(r"임직원|직원|구성원|employees?|명", txt, re.IGNORECASE):
+            if not re.search(r"임직원|직원|구성원|employees?", txt, re.IGNORECASE):
                 continue
-            count = _extract_employee_number(txt)
+            count = _extract_employee_number(txt, strict=True)
             if count is not None and 1 <= count <= 1_000_000:
                 print(f"[MENTION] secondary 텍스트에서 추출: {txt[:80]!r} → {count}", flush=True)
-                return _mention_for_count(count)
+                return _filter_excluded(_mention_for_count(count))
 
         print("[MENTION] 모든 필드에서 임직원 수 추출 실패, fallback", flush=True)
-        return MENTION_FALLBACK
+        return _filter_excluded(MENTION_FALLBACK)
     except Exception as e:
         print(f"[MENTION] 파싱 예외, fallback: {e}", flush=True)
-        return MENTION_FALLBACK
+        return _filter_excluded(MENTION_FALLBACK)
 
 
 # ──────────────────────────────────────────────────
@@ -708,6 +725,12 @@ def slack_events():
     channel_id = event.get("channel", "")
     message_text = event.get("text", "").strip()
     ts = event.get("ts", "")
+    thread_ts = event.get("thread_ts")
+
+    # 스레드 답글 스킵 (최상위 메시지만 처리)
+    if thread_ts and thread_ts != ts:
+        print(f"[EVENT] 스레드 답글 스킵: thread_ts={thread_ts}, ts={ts}", flush=True)
+        return jsonify({"ok": True})
 
     # 특정 채널만 처리 (SLACK_CHANNEL_ID 미설정 시 모든 채널)
     if SLACK_CHANNEL_ID and channel_id != SLACK_CHANNEL_ID:
